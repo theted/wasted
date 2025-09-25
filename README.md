@@ -1,10 +1,11 @@
 # Wasted
+
+![xkcd: Compiling](https://imgs.xkcd.com/comics/compiling.png)
+_...but where did that compile time go?_
 Track time spent waiting for commands to finish and summarize it over time.
 
 Commands:
-- `wasted`: runs a command, measures wall time, and appends an entry to `~/.wasted.json`.
-- `wasted-total`: prints the total time wasted, number of operations, and the span in days.
-- `wasted-stats`: analyzes the log to surface bottlenecks (top commands, families, weeks, etc.).
+- `wasted`: runs a command, measures wall time, and appends an entry to `~/.wasted.json`. When run with no arguments, it prints statistics (top commands, paths, waits, weekly totals, latest, and a total summary).
 - `wasted-debug`: prints the contents of `~/.wasted.json`.
 
 Requirements:
@@ -44,15 +45,12 @@ Example log file (`~/.wasted.json`):
 ]
 ```
 
-Summarize totals:
+Totals summary:
 
 ```
-wasted-total
+wasted
+# ... tables ...
 # 1 hour, 51 minutes, 51 seconds wasted in 11 commands in 5 days.
-
-# short/compact format
-wasted-total --short
-# 6711s wasted in 11 commands in 5 days.
 ```
 
 ## Installation (Linux)
@@ -65,8 +63,6 @@ Option A — user-local install (recommended):
 # ensure ~/.local/bin is on your PATH
 mkdir -p ~/.local/bin
 ln -s "$(pwd)/wasted.sh" ~/.local/bin/wasted
-ln -s "$(pwd)/wasted-total.sh" ~/.local/bin/wasted-total
-ln -s "$(pwd)/wasted-stats.sh" ~/.local/bin/wasted-stats
 ln -s "$(pwd)/wasted-debug.sh" ~/.local/bin/wasted-debug
 ```
 
@@ -81,8 +77,6 @@ Option B — system-wide (requires sudo):
 
 ```
 sudo ln -s "$(pwd)/wasted.sh" /usr/local/bin/wasted
-sudo ln -s "$(pwd)/wasted-total.sh" /usr/local/bin/wasted-total
-sudo ln -s "$(pwd)/wasted-stats.sh" /usr/local/bin/wasted-stats
 sudo ln -s "$(pwd)/wasted-debug.sh" /usr/local/bin/wasted-debug
 ```
 
@@ -90,7 +84,7 @@ Then run:
 
 ```
 wasted sleep 1
-wasted-total
+wasted
 wasted-debug
 ```
 
@@ -98,7 +92,7 @@ wasted-debug
 - Log is stored at `~/.wasted.json`.
 - `wasted` returns the wrapped command’s exit code.
 - Remove `~/.wasted.json` to reset history.
-- Requires GNU `date` for `wasted-total` (standard on most Linux distros).
+- Requires GNU `date` (or `gdate` on macOS) for some date calculations used in stats.
 
 ## Installation (macOS)
 
@@ -111,8 +105,6 @@ Link the scripts (user-local example):
 ```
 mkdir -p ~/bin
 ln -s "$(pwd)/wasted.sh" ~/bin/wasted
-ln -s "$(pwd)/wasted-total.sh" ~/bin/wasted-total
-ln -s "$(pwd)/wasted-stats.sh" ~/bin/wasted-stats
 ln -s "$(pwd)/wasted-debug.sh" ~/bin/wasted-debug
 ```
 
@@ -124,33 +116,24 @@ source ~/.zshrc
 ```
 
 Notes for macOS:
-- `wasted-total` and `wasted-stats` auto-detect `gdate` when available (via Homebrew coreutils) and fall back to BSD `date` parsing.
-- `wasted` works with the system `date` and does not require `gdate`.
+- `wasted` auto-detects `gdate` when available (via Homebrew coreutils) and falls back to BSD `date` parsing for stats.
+- `wasted` works with the system `date` to record commands and does not require `gdate`.
 
 ## Statistics
 
-Use `wasted-stats` to explore where your time goes and spot bottlenecks:
-
-Examples:
+Run `wasted` with no arguments to explore where your time goes and spot bottlenecks:
 
 ```
-wasted-stats             # top commands, top waits, weekly totals
-wasted-stats --family    # include top families (docker, git, node-pm, ...)
-wasted-stats --paths     # include top paths (cwd)
-wasted-stats --threshold 120  # alert for waits >= 120s
-wasted-stats --no-threshold   # disable threshold alerts
-wasted-stats --top 15    # show more top commands
-wasted-stats --weeks     # weekly totals only
-wasted-stats --days      # daily totals only
+wasted                   # top commands, top paths, top waits, weekly totals, latest 5, total summary
 ```
 
 What you get:
-- Top commands: aggregated by the base command (first word), with seconds and percentage of the total.
-- Top families (optional with `--family`): groups related commands (e.g., docker build/pull/compose) for broader insights.
-- Top paths (optional with `--paths`): aggregate by the directory where commands were run to spot slow projects/dirs.
+- Top commands: aggregated by the base command (first word), with seconds and percentage of the total. Title includes total command count.
+- Top paths: aggregate by the directory where commands were run to spot slow projects/dirs.
 - Top waits: the five longest single operations.
-- Threshold alerts (configurable with `--threshold`): list waits exceeding a given time.
+- Threshold alerts (default threshold 60s): list waits exceeding a given time.
 - Weekly totals: ISO week bucketed sums to see trends.
+- Latest 5 commands: most recent entries with command, seconds, and path.
 
 Ideas for further analysis:
 - Hour-of-day heatmap to see when slowdowns occur.

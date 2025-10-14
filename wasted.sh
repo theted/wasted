@@ -23,12 +23,28 @@ render_table() {
   local title="${1:-}"
   awk -v TITLE="$title" -F '\t' '
     function rep(n, c,  s, i){ s=""; for(i=0;i<n;i++) s=s c; return s }
-    function round1(x){ return int(x*10+0.5)/10 }
-    function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
-    NR==1 { header=$0; ncols=split($0, H, FS); for (i=1;i<=ncols;i++) W[i]=length(H[i]); next }
+    function round0(x){ return int(x+0.5) }
+    function isnum(s){ return (s ~ /^-?[0-9]+(\.[0-9]+)?$/) }
+    function fmt_time(x,  s,h,m,out){ s=round0(x); h=int(s/3600); m=int((s%3600)/60); s=s%60; out=""; if(h>0) out=out h "h "; if(h>0||m>0) out=out m "m "; out=out s "s"; return out }
+    NR==1 {
+      header=$0; ncols=split($0, H, FS); for (i=1;i<=ncols;i++) W[i]=length(H[i]); next
+    }
     {
-      rows[NR-1]=$0; n=split($0, A, FS); if (n>ncols) ncols=n;
-      for (i=1;i<=n;i++) if (length(A[i])>W[i]) W[i]=length(A[i]);
+      # format any column named "time" (case-insensitive) if it is numeric
+      n=split($0, A, FS); if (n>ncols) ncols=n;
+      for (i=1;i<=n;i++) {
+        col=A[i]
+        if (i in H) {
+          h=H[i];
+          tl=tolower(h);
+          if (tl=="time" && isnum(col)) col=fmt_time(col);
+        }
+        A[i]=col
+        if (length(A[i])>W[i]) W[i]=length(A[i]);
+      }
+      # rejoin formatted row for printing later
+      row=""; for (i=1;i<=ncols;i++) { if (i<=n) f=A[i]; else f=""; row = (i==1?f:row FS f) }
+      rows[NR-1]=row
     }
     END {
       if (TITLE!="") print TITLE;
@@ -52,16 +68,16 @@ print_top_commands() {
   jq -r '
     [ .[] | {base: (.command | split(" ")[0]), time: (.time_spent_seconds // 0)} ] as $rows
     | ($rows | map(.time) | add // 0) as $total
-    | reduce $rows[] as $r ({}; .[$r.base] = ((.[$r.base] // 0) + $r.time))
-    | to_entries | sort_by(-.value)
-    | .[] | [ .key, (.value), ($total) ] | @tsv
+    | reduce $rows[] as $r ({}; .[$r.base] = {time: ((.[$r.base].time // 0) + $r.time), count: ((.[$r.base].count // 0) + 1)})
+    | to_entries
+    | map({key: .key, time: .value.time, count: .value.count})
+    | sort_by(-.time)
+    | .[] | [ .key, (.time), (.count), ($total) ] | @tsv
   ' "${LOG_FILE}" \
   | awk '
-      function round1(x){ return int(x*10+0.5)/10 }
-      function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
       BEGIN{OFS="\t"; printed=0}
-      NR==1 { total=$3; print "command","seconds","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,fmt1($2),sprintf("%.1f%%", pct); printed=1; next }
-      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,fmt1($2),sprintf("%.1f%%", pct); printed++ }' \
+      NR==1 { total=$4; print "command","time","count","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,sprintf("%.1f%%", pct); printed=1; next }
+      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,sprintf("%.1f%%", pct); printed++ }' \
   | render_table "Top commands by total wasted time (${TOTAL_OPS} commands)"
 }
 
@@ -75,11 +91,9 @@ print_top_paths() {
     | .[] | [ .key, (.value), ($total) ] | @tsv
   ' "${LOG_FILE}" \
   | awk '
-      function round1(x){ return int(x*10+0.5)/10 }
-      function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
       BEGIN{OFS="\t"; printed=0}
-      NR==1 { total=$3; print "path","seconds","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,fmt1($2),sprintf("%.1f%%", pct); printed=1; next }
-      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,fmt1($2),sprintf("%.1f%%", pct); printed++ }' \
+      NR==1 { total=$3; print "path","time","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,sprintf("%.1f%%", pct); printed=1; next }
+      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,sprintf("%.1f%%", pct); printed++ }' \
   | render_table "Top paths by total wasted time"
 }
 
@@ -87,24 +101,18 @@ print_top_waits() {
   jq -r '.[] | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0)} | [ (.t), (.dt), (.cmd) ] | @tsv' "${LOG_FILE}" \
   | sort -t $'\t' -nrk1,1 | head -n 5 \
   | awk -F '\t' '
-      function round1(x){ return int(x*10+0.5)/10 }
-      function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
-      BEGIN{OFS="\t"; print "seconds","datetime","command"}
-      {print fmt1($1), $2, $3}' \
+      BEGIN{OFS="\t"; print "time","datetime","command"}
+      {print $1, $2, $3}' \
   | render_table "Top 5 longest single waits"
 }
 
 print_threshold_alerts() {
   local threshold=60
-  local count
-  count=$(jq -r --argjson th "$threshold" '[ .[] | select((.time_spent_seconds // 0) >= $th) ] | length' "${LOG_FILE}")
-  jq -r --argjson th "$threshold" '[ .[] | select((.time_spent_seconds // 0) >= $th) | {t: (.time_spent_seconds // 0), dt: .datetime, cmd: .command} ] | sort_by(-.t) | .[] | [ (.t), (.dt), (.cmd) ] | @tsv' "${LOG_FILE}" \
+  jq -r --argjson th "$threshold" '[ .[] | select((.time_spent_seconds // 0) > $th) | {t: (.time_spent_seconds // 0), dt: .datetime, cmd: .command} ] | sort_by(.dt) | reverse | .[:10][] | [ (.t), (.dt), (.cmd) ] | @tsv' "${LOG_FILE}" \
   | awk -F '\t' '
-      function round1(x){ return int(x*10+0.5)/10 }
-      function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
-      BEGIN{OFS="\t"; print "seconds","datetime","command"}
-      {print fmt1($1), $2, $3}' \
-  | render_table "Threshold alerts (>= ${threshold}s, ${count} waits)"
+      BEGIN{OFS="\t"; print "time","datetime","command"}
+      {print $1, $2, $3}' \
+  | render_table "Latest 10 commands > ${threshold}s"
 }
 
 print_totals_by_week() {
@@ -120,19 +128,21 @@ print_totals_by_week() {
       fi
       printf "%s\t%s\n" "$wk" "$sec"
     done \
-  | awk 'BEGIN{OFS="\t"} function round1(x){ return int(x*10+0.5)/10 } function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) } {sum[$1]+=$2} END{for (k in sum) printf("%s\t%s\n", k, fmt1(sum[k]))}' \
+  | awk '
+      BEGIN{OFS="\t"}
+      {sum[$1]+=$2}
+      END{for (k in sum) printf("%s\t%s\n", k, sum[k])}
+    ' \
   | sort -t $'\t' -k1,1 \
-  | { printf "week\tseconds\n"; cat; } \
+  | { printf "week\ttime\n"; cat; } \
   | render_table "Weekly totals (ISO week)"
 }
 
 print_latest_commands() {
   jq -r '[ .[] | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0), path: (.cwd // "(unknown)")} ] | sort_by(.dt) | reverse | .[:5][] | [ .dt, .cmd, (.t), .path ] | @tsv' "${LOG_FILE}" \
   | awk -F '\t' '
-      function round1(x){ return int(x*10+0.5)/10 }
-      function fmt1(x, y){ y=round1(x); if (y==int(y)) return int(y); else return sprintf("%.1f", y+0) }
-      BEGIN{OFS="\t"; print "datetime","command","seconds","path"}
-      {print $1, $2, fmt1($3), $4}' \
+      BEGIN{OFS="\t"; print "datetime","command","time","path"}
+      {print $1, $2, $3, $4}' \
   | render_table "Latest 5 commands"
 }
 
@@ -145,19 +155,25 @@ print_total_summary() {
   total_secs_int=$(awk -v t="${total_time}" 'BEGIN{printf "%.0f", t}')
   first_dt=$(jq -r '.[0].datetime' "${LOG_FILE}")
   last_dt=$(jq -r '.[-1].datetime' "${LOG_FILE}")
-  if [ "${DATE_CMD}" = "gdate" ]; then
-    first_unix=$(gdate -d "${first_dt}" +%s)
-    last_unix=$(gdate -d "${last_dt}" +%s)
-  else
-    first_unix=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "${first_dt}" +%s)
-    last_unix=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "${last_dt}" +%s)
-  fi
-  time_diff=$(( last_unix - first_unix ))
-  if [ ${time_diff} -le 0 ]; then
-    total_days=1
-  else
-    total_days=$(( (time_diff + 86399) / 86400 ))
-  fi
+  # Compute the number of unique weekdays (Mon-Fri) that have at least one command
+  # Extract just the date (YYYY-MM-DD) for each entry, keep only weekdays, then count uniques
+  total_days=$(jq -r '.[].datetime' "${LOG_FILE}" \
+    | awk -F 'T' '{print $1}' \
+    | while read -r d; do
+        if [ "${DATE_CMD}" = "gdate" ]; then
+          dow=$(gdate -d "$d" +%u)
+        else
+          # Try %u (Mon=1..Sun=7); fall back to %w (Sun=0..Sat=6)
+          dow=$(date -j -u -f "%Y-%m-%d" "$d" +%u 2>/dev/null || date -j -u -f "%Y-%m-%d" "$d" +%w)
+          # If we got %w semantics, map Sunday(0) -> 7
+          if [ "$dow" = "0" ]; then dow=7; fi
+        fi
+        # Keep only Monday(1) through Friday(5)
+        if [ "$dow" -ge 1 ] && [ "$dow" -le 5 ]; then
+          echo "$d"
+        fi
+      done \
+    | sort -u | wc -l | tr -d '[:space:]')
   hours=$(( total_secs_int / 3600 ))
   mins=$(( (total_secs_int % 3600) / 60 ))
   secs=$(( total_secs_int % 60 ))

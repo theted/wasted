@@ -93,6 +93,7 @@ wasted-debug
 - `wasted` returns the wrapped command’s exit code.
 - Remove `~/.wasted.json` to reset history.
 - Requires GNU `date` (or `gdate` on macOS) for some date calculations used in stats.
+- The total summary day count reflects unique weekdays (Mon–Fri) that have at least one command; weekends are excluded.
 
 ## Installation (macOS)
 
@@ -128,10 +129,10 @@ wasted                   # top commands, top paths, top waits, weekly totals, la
 ```
 
 What you get:
-- Top commands: aggregated by the base command (first word), with seconds and percentage of the total. Title includes total command count.
+- Top commands: aggregated by the base command (first word), with seconds, number of commands, and percentage of the total. Title includes total command count.
 - Top paths: aggregate by the directory where commands were run to spot slow projects/dirs.
 - Top waits: the five longest single operations.
-- Threshold alerts (default threshold 60s): list waits exceeding a given time.
+- Latest 10 >60s: most recent commands that took more than 60 seconds.
 - Weekly totals: ISO week bucketed sums to see trends.
 - Latest 5 commands: most recent entries with command, seconds, and path.
 

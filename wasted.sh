@@ -98,19 +98,28 @@ print_top_paths() {
 }
 
 print_top_waits() {
-  jq -r '.[] | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0)} | [ (.t), (.dt), (.cmd) ] | @tsv' "${LOG_FILE}" \
+  jq -r '.[]
+    | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0)}
+    | [ (.t), (.dt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), (.cmd) ]
+    | @tsv' "${LOG_FILE}" \
   | sort -t $'\t' -nrk1,1 | head -n 5 \
   | awk -F '\t' '
-      BEGIN{OFS="\t"; print "time","datetime","command"}
+      BEGIN{OFS="\t"; print "time","date","command"}
       {print $1, $2, $3}' \
   | render_table "Top 5 longest single waits"
 }
 
 print_threshold_alerts() {
   local threshold=60
-  jq -r --argjson th "$threshold" '[ .[] | select((.time_spent_seconds // 0) > $th) | {t: (.time_spent_seconds // 0), dt: .datetime, cmd: .command} ] | sort_by(.dt) | reverse | .[:10][] | [ (.t), (.dt), (.cmd) ] | @tsv' "${LOG_FILE}" \
+  jq -r --argjson th "$threshold" '
+    [ .[]
+      | select((.time_spent_seconds // 0) > $th)
+      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command}
+    ]
+    | sort_by(.dt) | reverse | .[:10][]
+    | [ (.t), (.dtf), (.cmd) ] | @tsv' "${LOG_FILE}" \
   | awk -F '\t' '
-      BEGIN{OFS="\t"; print "time","datetime","command"}
+      BEGIN{OFS="\t"; print "time","date","command"}
       {print $1, $2, $3}' \
   | render_table "Latest 10 commands > ${threshold}s"
 }
@@ -139,9 +148,13 @@ print_totals_by_week() {
 }
 
 print_latest_commands() {
-  jq -r '[ .[] | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0), path: (.cwd // "(unknown)")} ] | sort_by(.dt) | reverse | .[:5][] | [ .dt, .cmd, (.t), .path ] | @tsv' "${LOG_FILE}" \
+  jq -r '[ .[]
+      | {dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command, t: (.time_spent_seconds // 0), path: (.cwd // "(unknown)")}
+    ]
+    | sort_by(.dt) | reverse | .[:5][]
+    | [ .dtf, .cmd, (.t), .path ] | @tsv' "${LOG_FILE}" \
   | awk -F '\t' '
-      BEGIN{OFS="\t"; print "datetime","command","time","path"}
+      BEGIN{OFS="\t"; print "date","command","time","path"}
       {print $1, $2, $3, $4}' \
   | render_table "Latest 5 commands"
 }

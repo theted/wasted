@@ -191,14 +191,20 @@ print_total_summary() {
   mins=$(( (total_secs_int % 3600) / 60 ))
   secs=$(( total_secs_int % 60 ))
   human=""
-  if [ "${hours}" -gt 0 ]; then if [ "${hours}" -eq 1 ]; then human+="${hours} hour"; else human+="${hours} hours"; fi; fi
-  if [ "${hours}" -gt 0 ] || [ "${mins}" -gt 0 ]; then if [ -n "${human}" ]; then human+=", "; fi; if [ "${mins}" -eq 1 ]; then human+="${mins} minute"; else human+="${mins} minutes"; fi; fi
-  if [ -n "${human}" ]; then human+=", "; fi
+  if [ "${hours}" -gt 0 ]; then
+    if [ "${hours}" -eq 1 ]; then human+="${hours} hour"; else human+="${hours} hours"; fi
+  fi
+  if [ "${hours}" -gt 0 ] || [ "${mins}" -gt 0 ]; then
+    if [ -n "${human}" ]; then human+=" "; fi
+    if [ "${mins}" -eq 1 ]; then human+="${mins} minute"; else human+="${mins} minutes"; fi
+  fi
+  if [ -n "${human}" ]; then human+=" "; fi
   if [ "${secs}" -eq 1 ]; then human+="${secs} second"; else human+="${secs} seconds"; fi
   local cmd_label day_label
   if [ "${TOTAL_OPS}" -eq 1 ]; then cmd_label="command"; else cmd_label="commands"; fi
   if [ "${total_days}" -eq 1 ]; then day_label="day"; else day_label="days"; fi
-  echo "${human} wasted in ${TOTAL_OPS} ${cmd_label} in ${total_days} ${day_label}."
+  summary_line="${human} wasted waiting on ${TOTAL_OPS} ${cmd_label} during ${total_days} ${day_label}."
+  printf "\033[31m%s\033[0m\n" "$summary_line"
 }
 
 if [ "$#" -eq 0 ]; then

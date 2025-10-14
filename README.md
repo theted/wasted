@@ -1,15 +1,16 @@
 # Wasted
 
 ![xkcd: Compiling](https://imgs.xkcd.com/comics/compiling.png)
-_...but where did that compile time go?_
+
+_...but where did that time go?_
+
 Track time spent waiting for commands to finish and summarize it over time.
 
 Commands:
 - `wasted`: runs a command, measures wall time, and appends an entry to `~/.wasted.json`. When run with no arguments, it prints statistics (top commands, paths, waits, weekly totals, latest, and a total summary).
-- `wasted-debug`: prints the contents of `~/.wasted.json`.
 
 Requirements:
-- `bash`, `date` (GNU), and `jq` installed and on `PATH`.
+- `bash`, `date`, and `jq` on `PATH`. On Linux, `date` is GNU `date`; on macOS, BSD `date` works and `gdate` (GNU coreutils) is recommended for consistent stats.
 
 ## Usage
 
@@ -21,36 +22,12 @@ wasted sleep 5
 wasted ping -c 3 google.com
 ```
 
-Example log file (`~/.wasted.json`):
-```
-[
-  {
-    "datetime": "2023-10-27T10:30:00Z",
-    "time_spent_seconds": 5.0,
-    "command": "sleep 5",
-    "cwd": "/home/alice/project-a"
-  },
-  {
-    "datetime": "2023-10-27T10:30:10Z",
-    "time_spent_seconds": 3.3,
-    "command": "ping -c 3 google.com",
-    "cwd": "/home/alice/project-a"
-  },
-  {
-    "datetime": "2023-10-27T10:30:25Z",
-    "time_spent_seconds": 12.5,
-    "command": "docker-compose up -d",
-    "cwd": "/home/alice/project-b"
-  }
-]
-```
-
 Totals summary:
 
 ```
 wasted
 # ... tables ...
-# 1 hour, 51 minutes, 51 seconds wasted in 11 commands in 5 days.
+# 1 hour 51 minutes 51 seconds wasted waiting on 11 commands during 5 days.
 ```
 
 ## Installation (Linux)
@@ -134,8 +111,4 @@ What you get:
 - Top waits: the five longest single operations.
 - Latest 10 >60s: most recent commands that took more than 60 seconds.
 - Weekly totals: ISO week bucketed sums to see trends.
-- Latest 5 commands: most recent entries with command, seconds, and path.
-
-Ideas for further analysis:
-- Hour-of-day heatmap to see when slowdowns occur.
-- Per-branch or per-repo breakdowns by parsing CWD/environment.
+- Latest 5 commands: most recent entries with date, command, seconds, and path.

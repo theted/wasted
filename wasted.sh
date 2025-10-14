@@ -226,9 +226,32 @@ FULL_COMMAND="$*"
 # Start timer (seconds.nanoseconds)
 START_TIME=$(date +%s.%N)
 
-# Execute the command with original arguments; capture exit status
-"$@"
-CMD_STATUS=$?
+# Execute the command with alias/function support from the user's shell
+# Build a safely quoted command string so alias expansion works via -c
+shell_quote_args() {
+  local out="" a
+  for a in "$@"; do
+    # wrap each arg in single quotes and escape internal single quotes
+    a=$(printf "%s" "$a" | sed "s/'/'\\''/g")
+    out+=" '$a'"
+  done
+  printf "%s" "${out# }"
+}
+
+CMD_STR=$(shell_quote_args "$@")
+USER_SHELL=${SHELL:-/bin/bash}
+SHELL_NAME=$(basename "$USER_SHELL")
+
+if [ "$SHELL_NAME" = "zsh" ]; then
+  zsh -c "source ~/.zshrc 2>/dev/null; eval ${CMD_STR}"
+  CMD_STATUS=$?
+elif [ "$SHELL_NAME" = "bash" ]; then
+  bash -c "shopt -s expand_aliases; source ~/.bashrc 2>/dev/null; eval ${CMD_STR}"
+  CMD_STATUS=$?
+else
+  "$@"
+  CMD_STATUS=$?
+fi
 
 # End timer
 END_TIME=$(date +%s.%N)

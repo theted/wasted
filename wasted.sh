@@ -66,18 +66,18 @@ render_table() {
 print_top_commands() {
   local top_n=10
   jq -r '
-    [ .[] | {base: (.command | split(" ")[0]), time: (.time_spent_seconds // 0)} ] as $rows
+    [ .[] | {base: (.command | split(" ")[0]), time: (.time_spent_seconds // 0), failed: ((.exit_code // 0) != 0)} ] as $rows
     | ($rows | map(.time) | add // 0) as $total
-    | reduce $rows[] as $r ({}; .[$r.base] = {time: ((.[$r.base].time // 0) + $r.time), count: ((.[$r.base].count // 0) + 1)})
+    | reduce $rows[] as $r ({}; .[$r.base] = {time: ((.[$r.base].time // 0) + $r.time), count: ((.[$r.base].count // 0) + 1), failed: ((.[$r.base].failed // 0) + (if $r.failed then 1 else 0 end))})
     | to_entries
-    | map({key: .key, time: .value.time, count: .value.count})
+    | map({key: .key, time: .value.time, count: .value.count, failed: .value.failed})
     | sort_by(-.time)
-    | .[] | [ .key, (.time), (.count), ($total) ] | @tsv
+    | .[] | [ .key, (.time), (.count), (.failed), ($total) ] | @tsv
   ' "${LOG_FILE}" \
   | awk '
       BEGIN{OFS="\t"; printed=0}
-      NR==1 { total=$4; print "command","time","count","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,sprintf("%.1f%%", pct); printed=1; next }
-      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,sprintf("%.1f%%", pct); printed++ }' \
+      NR==1 { total=$5; print "command","time","count","failed","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,$4,sprintf("%.1f%%", pct); printed=1; next }
+      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,$4,sprintf("%.1f%%", pct); printed++ }' \
   | render_table "Top commands by total wasted time (${TOTAL_OPS} commands)"
 }
 
@@ -124,25 +124,37 @@ print_threshold_alerts() {
   | render_table "Latest 10 commands > ${threshold}s"
 }
 
+print_failed_commands() {
+  local failed_count
+  failed_count=$(jq '[.[] | select((.exit_code // 0) != 0)] | length' "${LOG_FILE}")
+  if [ "${failed_count}" -eq 0 ]; then
+    return
+  fi
+  jq -r '
+    [ .[]
+      | select((.exit_code // 0) != 0)
+      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command, code: (.exit_code // 0)}
+    ]
+    | sort_by(.dt) | reverse | .[:10][]
+    | [ (.dtf), (.cmd), (.t), (.code) ] | @tsv' "${LOG_FILE}" \
+  | awk -F '\t' '
+      BEGIN{OFS="\t"; print "date","command","time","exit"}
+      {print $1, $2, $3, $4}' \
+  | render_table "Latest 10 failed commands (${failed_count} total failures)"
+}
+
 print_totals_by_week() {
-  # Prefer GNU date (gdate) if available; otherwise use BSD date
-  DATE_CMD="date"
-  if command -v gdate >/dev/null 2>&1; then DATE_CMD="gdate"; fi
-  jq -r '.[] | [.datetime, (.time_spent_seconds // 0)] | @tsv' "${LOG_FILE}" \
-  | while IFS=$'\t' read -r dt sec; do
-      if [ "${DATE_CMD}" = "gdate" ]; then
-        wk=$(gdate -d "$dt" +%G-W%V)
-      else
-        wk=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$dt" +%G-W%V)
-      fi
-      printf "%s\t%s\n" "$wk" "$sec"
-    done \
-  | awk '
-      BEGIN{OFS="\t"}
-      {sum[$1]+=$2}
-      END{for (k in sum) printf("%s\t%s\n", k, sum[k])}
-    ' \
-  | sort -t $'\t' -k1,1 \
+  # Use jq for date parsing to avoid spawning shell processes per entry
+  jq -r '
+    reduce .[] as $entry ({};
+      ($entry.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | strftime("%G-W%V")) as $week
+      | .[$week] = ((.[$week] // 0) + ($entry.time_spent_seconds // 0))
+    )
+    | to_entries
+    | sort_by(.key)
+    | .[]
+    | [.key, .value] | @tsv
+  ' "${LOG_FILE}" \
   | { printf "week\ttime\n"; cat; } \
   | render_table "Weekly totals (ISO week)"
 }
@@ -160,33 +172,16 @@ print_latest_commands() {
 }
 
 print_total_summary() {
-  # Prefer GNU date (gdate) if available; otherwise use BSD date
-  DATE_CMD="date"
-  if command -v gdate >/dev/null 2>&1; then DATE_CMD="gdate"; fi
-  local total_time total_secs_int first_dt last_dt first_unix last_unix time_diff total_days human hours mins secs cmd_label day_label
-  total_time=$(jq 'map(.time_spent_seconds) | add // 0' "${LOG_FILE}")
-  total_secs_int=$(awk -v t="${total_time}" 'BEGIN{printf "%.0f", t}')
-  first_dt=$(jq -r '.[0].datetime' "${LOG_FILE}")
-  last_dt=$(jq -r '.[-1].datetime' "${LOG_FILE}")
-  # Compute the number of unique weekdays (Mon-Fri) that have at least one command
-  # Extract just the date (YYYY-MM-DD) for each entry, keep only weekdays, then count uniques
-  total_days=$(jq -r '.[].datetime' "${LOG_FILE}" \
-    | awk -F 'T' '{print $1}' \
-    | while read -r d; do
-        if [ "${DATE_CMD}" = "gdate" ]; then
-          dow=$(gdate -d "$d" +%u)
-        else
-          # Try %u (Mon=1..Sun=7); fall back to %w (Sun=0..Sat=6)
-          dow=$(date -j -u -f "%Y-%m-%d" "$d" +%u 2>/dev/null || date -j -u -f "%Y-%m-%d" "$d" +%w)
-          # If we got %w semantics, map Sunday(0) -> 7
-          if [ "$dow" = "0" ]; then dow=7; fi
-        fi
-        # Keep only Monday(1) through Friday(5)
-        if [ "$dow" -ge 1 ] && [ "$dow" -le 5 ]; then
-          echo "$d"
-        fi
-      done \
-    | sort -u | wc -l | tr -d '[:space:]')
+  local total_time total_secs_int total_days human hours mins secs cmd_label day_label
+  # Use jq for all calculations to avoid spawning shell processes
+  read -r total_secs_int total_days <<< "$(jq -r '
+    (map(.time_spent_seconds) | add // 0) as $total_time
+    | ($total_time | floor) as $total_secs
+    | ([.[].datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | strftime("%Y-%m-%d")] | unique) as $dates
+    | ($dates | map(strptime("%Y-%m-%d") | strftime("%u") | tonumber) | map(select(. >= 1 and . <= 5)) | length) as $weekdays
+    | "\($total_secs) \($weekdays)"
+  ' "${LOG_FILE}")"
+
   hours=$(( total_secs_int / 3600 ))
   mins=$(( (total_secs_int % 3600) / 60 ))
   secs=$(( total_secs_int % 60 ))
@@ -222,6 +217,7 @@ if [ "$#" -eq 0 ]; then
   print_top_paths
   print_top_waits
   print_threshold_alerts
+  print_failed_commands
   print_totals_by_week
   print_latest_commands
   print_total_summary
@@ -288,7 +284,8 @@ jq \
   --arg cmd "${FULL_COMMAND}" \
   --arg cwd "${CWD}" \
   --argjson spent "${TIME_SPENT_FORMATTED}" \
-  '. + [{datetime: $dt, time_spent_seconds: $spent, command: $cmd, cwd: $cwd}]' \
+  --argjson status "${CMD_STATUS}" \
+  '. + [{datetime: $dt, time_spent_seconds: $spent, command: $cmd, cwd: $cwd, exit_code: $status}]' \
   "${LOG_FILE}" > "${TMP_FILE}"
 mv "${TMP_FILE}" "${LOG_FILE}"
 

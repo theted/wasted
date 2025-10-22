@@ -4,6 +4,15 @@ set -euo pipefail
 
 # Configuration
 LOG_FILE="${HOME}/.wasted.json" # Store in home directory
+TMP_FILE=""
+
+# Cleanup temp files on exit
+cleanup() {
+  if [ -n "${TMP_FILE}" ] && [ -f "${TMP_FILE}" ]; then
+    rm -f "${TMP_FILE}"
+  fi
+}
+trap cleanup EXIT
 
 # Require jq for robust JSON handling
 if ! command -v jq >/dev/null 2>&1; then
@@ -257,6 +266,8 @@ CMD_STR=$(shell_quote_args "$@")
 USER_SHELL=${SHELL:-/bin/bash}
 SHELL_NAME=$(basename "$USER_SHELL")
 
+# Temporarily disable exit on error to capture command status
+set +e
 if [ "$SHELL_NAME" = "zsh" ]; then
   zsh -c "source ~/.zshrc 2>/dev/null; eval ${CMD_STR}"
   CMD_STATUS=$?
@@ -267,6 +278,7 @@ else
   "$@"
   CMD_STATUS=$?
 fi
+set -e
 
 # End timer
 END_TIME=$(date +%s.%N)
@@ -278,17 +290,23 @@ TIME_SPENT=$(echo "${END_TIME} - ${START_TIME}" | bc -l)
 TIME_SPENT_FORMATTED=$(printf "%.1f" "${TIME_SPENT}")
 
 # Append the entry to the JSON array using jq (preserves well-formed JSON)
-TMP_FILE=$(mktemp)
-jq \
-  --arg dt "${DATETIME}" \
-  --arg cmd "${FULL_COMMAND}" \
-  --arg cwd "${CWD}" \
-  --argjson spent "${TIME_SPENT_FORMATTED}" \
-  --argjson status "${CMD_STATUS}" \
-  '. + [{datetime: $dt, time_spent_seconds: $spent, command: $cmd, cwd: $cwd, exit_code: $status}]' \
-  "${LOG_FILE}" > "${TMP_FILE}"
-mv "${TMP_FILE}" "${LOG_FILE}"
+# Wrap in a subshell with error handling to ensure CMD_STATUS is preserved
+if TMP_FILE=$(mktemp) && \
+   jq \
+     --arg dt "${DATETIME}" \
+     --arg cmd "${FULL_COMMAND}" \
+     --arg cwd "${CWD}" \
+     --argjson spent "${TIME_SPENT_FORMATTED}" \
+     --argjson status "${CMD_STATUS}" \
+     '. + [{datetime: $dt, time_spent_seconds: $spent, command: $cmd, cwd: $cwd, exit_code: $status}]' \
+     "${LOG_FILE}" > "${TMP_FILE}" && \
+   mv "${TMP_FILE}" "${LOG_FILE}"; then
+  echo "Command '${FULL_COMMAND}' took ${TIME_SPENT_FORMATTED}s (exit ${CMD_STATUS})."
+  echo "Entry logged to ${LOG_FILE}"
+else
+  echo "Command '${FULL_COMMAND}' took ${TIME_SPENT_FORMATTED}s (exit ${CMD_STATUS})." >&2
+  echo "Warning: Failed to log entry to ${LOG_FILE}" >&2
+fi
 
-echo "Command '${FULL_COMMAND}' took ${TIME_SPENT_FORMATTED}s (exit ${CMD_STATUS})."
-echo "Entry logged to ${LOG_FILE}"
+# Always exit with the original command status
 exit ${CMD_STATUS}

@@ -85,8 +85,8 @@ print_top_commands() {
   ' "${LOG_FILE}" \
   | awk '
       BEGIN{OFS="\t"; printed=0}
-      NR==1 { total=$5; print "command","time","count","failed","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,$4,sprintf("%.1f%%", pct); printed=1; next }
-      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; print $1,$2,$3,$4,sprintf("%.1f%%", pct); printed++ }' \
+      NR==1 { total=$5; print "command","time","count","failed","failed %","%"; pct = ($2>0 && total>0)? ($2*100.0/total):0; fail_pct = ($3>0)? ($4*100.0/$3):0; print $1,$2,$3,$4,sprintf("%.1f%%", fail_pct),sprintf("%.1f%%", pct); printed=1; next }
+      printed<10 { pct = ($2>0 && total>0)? ($2*100.0/total):0; fail_pct = ($3>0)? ($4*100.0/$3):0; print $1,$2,$3,$4,sprintf("%.1f%%", fail_pct),sprintf("%.1f%%", pct); printed++ }' \
   | render_table "Top commands by total wasted time (${TOTAL_OPS} commands)"
 }
 

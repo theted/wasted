@@ -109,9 +109,9 @@ print_top_paths() {
 print_top_waits() {
   jq -r '.[]
     | {dt: .datetime, cmd: .command, t: (.time_spent_seconds // 0)}
-    | [ (.t), (.dt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), (.cmd) ]
+    | [ (.t), (.dt | fromdateiso8601 | localtime | strftime("%d/%m %H:%M")), (.cmd) ]
     | @tsv' "${LOG_FILE}" \
-  | sort -t $'\t' -nrk1,1 | head -n 5 \
+  | sort -t $'\t' -nrk1,1 | head -n 5 || true \
   | awk -F '\t' '
       BEGIN{OFS="\t"; print "time","date","command"}
       {print $1, $2, $3}' \
@@ -123,7 +123,7 @@ print_threshold_alerts() {
   jq -r --argjson th "$threshold" '
     [ .[]
       | select((.time_spent_seconds // 0) > $th)
-      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command}
+      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | fromdateiso8601 | localtime | strftime("%d/%m %H:%M")), cmd: .command}
     ]
     | sort_by(.dt) | reverse | .[:10][]
     | [ (.t), (.dtf), (.cmd) ] | @tsv' "${LOG_FILE}" \
@@ -142,7 +142,7 @@ print_failed_commands() {
   jq -r '
     [ .[]
       | select((.exit_code // 0) != 0)
-      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command, code: (.exit_code // 0)}
+      | {t: (.time_spent_seconds // 0), dt: .datetime, dtf: (.datetime | fromdateiso8601 | localtime | strftime("%d/%m %H:%M")), cmd: .command, code: (.exit_code // 0)}
     ]
     | sort_by(.dt) | reverse | .[:10][]
     | [ (.dtf), (.cmd), (.t), (.code) ] | @tsv' "${LOG_FILE}" \
@@ -170,7 +170,7 @@ print_totals_by_week() {
 
 print_latest_commands() {
   jq -r '[ .[]
-      | {dt: .datetime, dtf: (.datetime | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strftime("%d/%m %H:%M")), cmd: .command, t: (.time_spent_seconds // 0), path: (.cwd // "(unknown)")}
+      | {dt: .datetime, dtf: (.datetime | fromdateiso8601 | localtime | strftime("%d/%m %H:%M")), cmd: .command, t: (.time_spent_seconds // 0), path: (.cwd // "(unknown)")}
     ]
     | sort_by(.dt) | reverse | .[:5][]
     | [ .dtf, .cmd, (.t), .path ] | @tsv' "${LOG_FILE}" \
